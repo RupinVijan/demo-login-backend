@@ -1,9 +1,18 @@
 const express = require("express");
 const cors = require("cors");
+const { addData, getTableById } = require("./dbController");
+const { uploadFile } = require("./s3Constroller");
 const app = express();
+const bcrypt = require('bcryptjs')
 require("dotenv").config();
-const userModel = require('./models/userModel')
-const quesModel = require('./models/questionModel')
+const AWS = require('aws-sdk');
+const { v4: uuidv4 } = require('uuid');
+const s3 = new AWS.S3({
+  region: 'ap-south-1',
+    accessKeyId: process.env.AWS_ACCESS_KEY,
+    secretAccessKey:process.env.AWS_SECRET_KEY,
+  })
+
 
 const port = process.env.PORT || 8080;
 
@@ -11,24 +20,13 @@ app.use(cors());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-const mongoose = require("mongoose");
-MongoDbURL =  process.env.MONGODB_URL;
-mongoose.connect(MongoDbURL);
-var db = mongoose.connection;
-
-db.on("error", console.error.bind(console, "Connection error : "));
-db.once("open", function () {
-  console.log("Database is Ready.... ");
-});
-
 app.get('/', (req,res) => {
     res.send('Hello,World!')
 })
 app.post('/api/signup' ,async(req,res) => {
+  let newItem = req.body;
   try {
-    let user = await userModel.findOne({email:req.body.email});
-    if(user) return res.status(400).send({status:false, msg:'User Alread Exist!'})
-    user = await userModel.create(req.body)
+    let user = await addData(newItem)
     return res.status(200).send({status:true,msg:'User Created Successfully!' , user})
   } catch (error) {
     res.status(500).send({status:false,msg:'Internal Server Error!'})
@@ -36,33 +34,43 @@ app.post('/api/signup' ,async(req,res) => {
 })
 app.post('/api/login' ,async(req,res) => {
   try {
-    let user = await userModel.findOne({email:req.body.email});
-    if(!user || user.password !== req.body.password) return res.status(404).send({status:false, msg:'Invalid Credentials!'})
+    let user = await getTableById(req.body.email)
+    if(!user || !bcrypt.compareSync(req.body.password, user.Item.password)) return res.status(404).send({status:false, msg:'Invalid Credentials!'})
     
     return res.status(200).send({status:true,msg:'Logged in Successfully!' , user})
   } catch (error) {
     res.status(500).send({status:false,msg:'Internal Server Error!'})
+    console.log(error)
   }
 })
-app.post('/api/question' ,async(req,res) => {
+app.get('/api/user/:id' ,async(req,res) => {
   try {
-    let user = await userModel.findById(req.body.token);
-    if(!user) return res.status(404).send({status:false, msg:'User Does not Exist!'})
-    const question = await quesModel.create({user : user._id , question:req.body.question})
-    return res.status(200).send({status:true,msg:'Added Successfully!' , question})
+    let user = await getTableById(req.params.id)
+    if(!user) return res.status(404).send({status:false, msg:'Invalid Credentials!'})
+    
+    return res.status(200).send({status:true,msg:'Logged in Successfully!' , user})
   } catch (error) {
     res.status(500).send({status:false,msg:'Internal Server Error!'})
+    console.log(error)
   }
 })
 
-app.get('/api/question' , async(req,res) => {
-  let question = await quesModel.find();
-  return res.status(200).send({status:true,msg:'Fetched Successfully!' , question})
+app.get('/get-signed-url', async (req, res) => {
+  await s3.createPresignedPost({
+    Fields: {
+      key:uuidv4(),
+    },
+    Conditions: [
+      ["starts-with", "$Content-Type", "image/"],
+      ["content-length-range", 0, 1000000],
+    ],
+    Expires: 30,
+    Bucket: 'test-website-infobility',
+  }, (err, signed) => {
+    res.json(signed);
+  });
 })
-app.get('/api/users' , async(req,res) => {
-  let user = await userModel.find();
-  return res.status(200).send({status:true,msg:'Fetched Successfully!' , user})
-})
+
 app.listen(port, () => {
   console.log(`Your app listening at http://localhost:${port}`);
 });
